@@ -1,0 +1,398 @@
+---
+title: "InstaPrism"
+author: "Louise Spekking"
+date: "2024-09-25"
+output: html_document
+---
+
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+if (!require("Biobase", quietly = TRUE))
+    BiocManager::install("Biobase")
+
+if (!require("devtools", quietly = TRUE))
+    install.packages("devtools")
+
+devtools::install_github("humengying0907/InstaPrism")
+```
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#library(InstaPrism)
+library(biomaRt)
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(tibble)
+library(ggplot2)
+library(reshape2)
+#library(tidyverse)
+```
+
+## Test data 
+
+
+```{r test data}
+bulk_expr = read.csv(system.file('extdata','example_bulk.csv',package = 'InstaPrism')) 
+```
+
+```{r}
+OV_ref = InstaPrism_reference('OV')
+```
+```{r}
+deconv_res = InstaPrism(bulk_Expr = bulk_expr,refPhi_cs = OV_ref)
+
+```
+
+```{r}
+estimated_frac = t(deconv_res@Post.ini.ct@theta)
+head(estimated_frac)
+```
+
+```{r}
+# InstaPrism also returns the deconvolved gene expression Z
+Z = get_Z_array(deconv_res) # a sample by gene by cell-type array
+head(Z[,1:10,'malignant'])
+```
+
+
+
+## Organoid data
+
+```{r organoid data, echo=FALSE}
+organoid_data <- read.delim("~/Documents/PhD/Glioblastoma/4_spheroid_microarray/GCRMANormData_.txt")
+```
+
+#### ref data GBM
+```{r ref data}
+GBM_ref = InstaPrism_reference('GBM')
+```
+### Change ensembl gene id to ENTREZ gene discription
+```{r}
+mart <- useDataset("hsapiens_gene_ensembl", useMart("ensembl"))
+genes <- organoid_data$ENSG_ID
+# df<-df[,-4]
+G_list <- getBM(filters= "ensembl_gene_id", attributes= c("ensembl_gene_id","hgnc_symbol"),values=genes,mart= mart)
+```
+
+```{r}
+organoids = left_join(organoid_data,G_list,by=c(ENSG_ID = "ensembl_gene_id"))
+```
+
+Drop rows That have no gene names
+```{r}
+organoids %>% drop_na(hgnc_symbol)
+```
+
+```{r}
+organoids_2 = organoids[!is.na(organoids$hgnc_symbol), ]
+```
+
+Remove duplicate gene names
+```{r}
+organoids_3 <- organoids_2 %>% distinct(hgnc_symbol, .keep_all = TRUE)
+```
+
+Set symbols as index
+```{r}
+rownames(organoids_3) <- organoids_3$hgnc_symbol
+```
+
+drop rows not needed 
+```{r}
+drops <- c("ENSG_ID","hgnc_symbol")
+organoids_formatted = organoids_3[ , !(names(organoids_3) %in% drops)]
+```
+
+
+
+# create new ref
+
+
+Toy example
+```{r}
+data("sim.data")
+```
+
+
+```{r}
+library(Biobase)
+sc.eset = sim.data$sc.eset
+scExpr = exprs(sc.eset)
+cell_type_labels = pData(sc.eset)$cellType
+```
+
+```{r}
+dim(scExpr)
+```
+
+
+
+```{r}
+head(colnames(sc.eset),10)
+```
+
+```{r}
+cell_type_labels
+```
+
+
+
+Own ref
+
+```{r}
+neftel_ref <- read.delim("~/Documents/PhD/Glioblastoma/Data_annotated/Neftel_annotated_selected.csv", sep=',', stringsAsFactors=FALSE)
+```
+
+
+```{r}
+neftel_ref <- neftel_ref %>% remove_rownames %>% column_to_rownames(var="X")
+```
+
+```{r}
+cell_type_labels_neftel <- as.character(neftel_ref[257,])
+```
+
+```{r}
+row.names.remove <- c("classification", "Type")
+
+neftel_ref <- neftel_ref[!(row.names(neftel_ref) %in% row.names.remove), ]
+```
+
+
+### make the reference 
+
+```{r}
+cols.num <- colnames(neftel_ref)
+neftel_ref[cols.num] <- sapply(neftel_ref[cols.num],as.numeric)
+```
+
+make dataframe numeric
+```{r}
+head(sapply(neftel_ref, class),10)
+```
+
+
+```{r}
+refPhi_obj_Neftel = refPrepare(sc_Expr = neftel_ref, cell.type.labels = cell_type_labels_neftel, cell.state.labels = cell_type_labels_neftel)
+```
+
+### Deconvolution Organoid data
+```{r reference data}
+deconv_result_gbm <- InstaPrism(bulk_Expr = organoids_formatted, refPhi_cs = refPhi_obj_Neftel)
+```
+### Get estimated fractions 
+
+```{r}
+estimated_frac = t(deconv_result_gbm@Post.ini.ct@theta)
+estimated_frac
+```
+
+## get cell specific results 
+```{r}
+Z = get_Z_array(deconv_result_gbm)
+```
+```{r}
+dim(Z)
+```
+
+
+### make plots
+
+```{r}
+metadata = read.delim("~/Documents/PhD/Glioblastoma/4_spheroid_microarray/spheroid_metadata.csv", 
+                      sep=';', 
+                      header = FALSE, 
+                      col.names = c('number', 'Patient', 'Radiation', 'Time'))
+```
+
+```{r}
+estimated_frac_df = as.data.frame(estimated_frac) %>% rownames_to_column('number')
+
+```
+
+
+
+
+Join 
+```{r}
+fractions_metadata = left_join(estimated_frac_df, metadata)
+fractions_metadata$Time[fractions_metadata$Time == 0 & fractions_metadata$Radiation == 0] <- -1
+fractions_metadata
+```
+
+
+Select patient 1919
+
+```{r Gy4}
+# Filter data where Radiation is 10 or 0
+df_filtered <- fractions_metadata %>%
+  filter((Radiation == 4 | Radiation == 0) & Patient == 1919)
+
+# Reshape the data from wide format to long format
+df_long <- melt(df_filtered, 
+                id.vars = c("Time", "Patient"),
+                measure.vars = c("AClike", "OPClike", "MESlike1", 
+                                 "MESlike2", "NPClike1", "NPClike2"),
+                variable.name = "CellType", 
+                value.name = "Fraction")
+
+# Plot
+ggplot(df_long, aes(x = Time, y = Fraction, color = CellType, group = CellType)) +
+  geom_line() +
+  labs(title = "Fractions of Cell Types Over Time Patient 1919 Radiation 4 Gy",
+       x = "Time",
+       y = "Fraction of Cell Type") +
+  theme_minimal()
+
+ggsave('1919_Gy4.png')
+
+```
+
+```{r Gy 10}
+# Filter data where Radiation is 10 or 0
+df_filtered <- fractions_metadata %>%
+  filter((Radiation == 10 | Radiation == 0) & Patient == 1919)
+
+# Reshape the data from wide format to long format
+df_long <- melt(df_filtered, 
+                id.vars = c("Time", "Patient"),
+                measure.vars = c("AClike", "OPClike", "MESlike1", 
+                                 "MESlike2", "NPClike1", "NPClike2"),
+                variable.name = "CellType", 
+                value.name = "Fraction")
+
+# Plot
+ggplot(df_long, aes(x = Time, y = Fraction, color = CellType, group = CellType)) +
+  geom_line() +
+  labs(title = "Fractions of Cell Types Over Time Patient 1919 Radiation 10 Gy",
+       x = "Time",
+       y = "Fraction of Cell Type") +
+  theme_minimal()
+
+ggsave('1919_Gy10.png')
+
+```
+
+
+### Patient 3128
+Patient 3128 
+
+```{r}
+# Filter data where Radiation is 10 or 0
+df_filtered <- fractions_metadata %>%
+  filter((Radiation == 4 | Radiation == 0) & Patient == 3128)
+
+# Reshape the data from wide format to long format
+df_long <- melt(df_filtered, 
+                id.vars = c("Time", "Patient"),
+                measure.vars = c("AClike", "OPClike", "MESlike1", 
+                                 "MESlike2", "NPClike1", "NPClike2"),
+                variable.name = "CellType", 
+                value.name = "Fraction")
+
+# Plot
+ggplot(df_long, aes(x = Time, y = Fraction, color = CellType, group = CellType)) +
+  geom_line() +
+  labs(title = "Fractions of Cell Types Over Time Patient 3128 Radiation 4 Gy",
+       x = "Time",
+       y = "Fraction of Cell Type") +
+  theme_minimal()
+
+ggsave('3128_Gy4.png')
+
+```
+
+
+#####Gy10
+```{r}
+# Filter data where Radiation is 10 or 0
+df_filtered <- fractions_metadata %>%
+  filter((Radiation == 10 | Radiation == 0) & Patient == 3128)
+
+# Reshape the data from wide format to long format
+df_long <- melt(df_filtered, 
+                id.vars = c("Time", "Patient"),
+                measure.vars = c("AClike", "OPClike", "MESlike1", 
+                                 "MESlike2", "NPClike1", "NPClike2"),
+                variable.name = "CellType", 
+                value.name = "Fraction")
+
+# Plot
+ggplot(df_long, aes(x = Time, y = Fraction, color = CellType, group = CellType)) +
+  geom_line() +
+  labs(title = "Fractions of Cell Types Over Time Patient 3128 Radiation 10 Gy",
+       x = "Time",
+       y = "Fraction of Cell Type") +
+  theme_minimal()
+
+ggsave('3128_Gy10.png')
+
+
+```
+
+## Patient 3565
+##### Gy 4
+
+```{r}
+# Filter data where Radiation is 10 or 0
+df_filtered <- fractions_metadata %>%
+  filter((Radiation == 4 | Radiation == 0) & Patient == 3565)
+
+# Reshape the data from wide format to long format
+df_long <- melt(df_filtered, 
+                id.vars = c("Time", "Patient"),
+                measure.vars = c("AClike", "OPClike", "MESlike1", 
+                                 "MESlike2", "NPClike1", "NPClike2"),
+                variable.name = "CellType", 
+                value.name = "Fraction")
+
+# Plot
+ggplot(df_long, aes(x = Time, y = Fraction, color = CellType, group = CellType)) +
+  geom_line() +
+  labs(title = "Fractions of Cell Types Over Time Patient 3565 Radiation 4 Gy",
+       x = "Time",
+       y = "Fraction of Cell Type") +
+  theme_minimal()
+
+ggsave('3565_Gy4.png')
+
+```
+
+
+##### Gy10
+```{r}
+# Filter data where Radiation is 10 or 0
+df_filtered <- fractions_metadata %>%
+  filter((Radiation == 10 | Radiation == 0) & Patient == 3565)
+
+# Reshape the data from wide format to long format
+df_long <- melt(df_filtered, 
+                id.vars = c("Time", "Patient"),
+                measure.vars = c("AClike", "OPClike", "MESlike1", 
+                                 "MESlike2", "NPClike1", "NPClike2"),
+                variable.name = "CellType", 
+                value.name = "Fraction")
+
+# Plot
+ggplot(df_long, aes(x = Time, y = Fraction, color = CellType, group = CellType)) +
+  geom_line() +
+  labs(title = "Fractions of Cell Types Over Time Patient 3565 Radiation 10 Gy",
+       x = "Time",
+       y = "Fraction of Cell Type") +
+  theme_minimal()
+
+ggsave('3565_Gy10.png')
+
+```
+
+
+
+
+
+
+
