@@ -298,12 +298,12 @@ for patient_id in patient_list:
             axes_ess[1].grid(False)
             
             # Combined ESS convergence plot
-            axes_ess[2].plot(t_eval, data_prop[:,0], 'o', label='MES-like 1 observed', color='blue', markersize=8)
+            axes_ess[2].plot(t_eval, data_prop[:,0], 'o', label='MES-like 1', color='blue', markersize=8)
             axes_ess[2].plot(t_extended, trajectory_extended[:,0], '-', label='MES-like 1 fitted', color='lightblue', linewidth=2)
-            axes_ess[2].plot(t_eval, data_prop[:,1], 'o', label='MES-like 2 observed', color='red', markersize=8)
+            axes_ess[2].plot(t_eval, data_prop[:,1], 'o', label='MES-like 2', color='red', markersize=8)
             axes_ess[2].plot(t_extended, trajectory_extended[:,1], '-', label='MES-like 2 fitted', color='lightcoral', linewidth=2)
-            axes_ess[2].axhline(y=ess[1], color='blue', linestyle='--', alpha=0.7, label=f'ESS MES1 = {ess[0]:.3f}')
-            axes_ess[2].axhline(y=ess[0], color='red', linestyle='--', alpha=0.7, label=f'ESS MES2 = {ess[1]:.3f}')
+            axes_ess[2].axhline(y=ess[1], color='blue', linestyle='--', alpha=0.7, label=f'ESS MES-like 1 = {ess[0]:.3f}')
+            axes_ess[2].axhline(y=ess[0], color='red', linestyle='--', alpha=0.7, label=f'ESS MES-like 2 = {ess[1]:.3f}')
             axes_ess[2].set_xlabel('Time')
             axes_ess[2].set_ylabel('Proportion')
             axes_ess[2].set_title('Both MESlike: Data Fit & ESS Convergence')
